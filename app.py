@@ -13,6 +13,8 @@ from tkinter import ttk
 from tkinter import messagebox
 from PIL import Image, ImageDraw
 
+import wmi  # Import the wmi module
+
 # Configuración del logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -61,16 +63,26 @@ def hide_window():
     root.withdraw()
 
 def list_cameras():
-    index = 0
     arr = []
-    while True:
-        cap = cv2.VideoCapture(index)
-        if not cap.read()[0]:
-            break
-        else:
-            arr.append(index)
-        cap.release()
-        index += 1
+    try:
+        c = wmi.WMI()
+        for device in c.Win32_PnPEntity():
+            if device.Name and ("camera" in device.Name.lower() or "video" in device.Name.lower()):
+                name = device.Name
+                arr.append({"name": name, "index": len(arr)})  # Assign a unique index
+    except Exception as e:
+        logging.error(f"Error listing cameras with WMI: {e}")
+        # Fallback to the previous method if WMI fails
+        index = 0
+        while True:
+            cap = cv2.VideoCapture(index)
+            if not cap.isOpened():
+                break
+            else:
+                name = f"Cámara {index}"
+                arr.append({"name": name, "index": index})
+            cap.release()
+            index += 1
     return arr
 
 last_delay_log_time = {}  # Diccionario para almacenar el último tiempo de log por cliente
@@ -80,6 +92,12 @@ def start_server(port, camera_index):
 
     if not is_port_available(port):
         messagebox.showerror("Error", f"El puerto {port} ya está en uso. Prueba con otro.")
+        return  
+
+    # Ensure the camera index is valid
+    cameras = list_cameras()
+    if camera_index >= len(cameras) or camera_index < 0:
+        messagebox.showerror("Error", f"Índice de cámara {camera_index} fuera de rango.")
         return
 
     # Obtener la dirección IP local
@@ -120,27 +138,42 @@ def start_server(port, camera_index):
             body, html {
                 margin: 0;
                 padding: 0;
-                height: 100%;
-                overflow: hidden;
+                height: 100%; /* Fill the entire viewport */
+                width: 100%;  /* Fill the entire viewport */
+                overflow: hidden; /* Prevent scrollbars */
             }
             #stream {
-                width: 100%;
-                height: 100%;
-                object-fit: contain; /* Ajusta la imagen para llenar la pantalla */
-                display: block; /* Elimina el espacio extra debajo de la imagen */
+                display: block;
+                max-width: 100%; /* Ensure it doesn't exceed the viewport width */
+                max-height: 100%; /* Ensure it doesn't exceed the viewport height */
+                object-fit: contain; /* Maintain aspect ratio and fit inside the viewport */
+                position: absolute; /* Position it to cover the entire viewport */
+                top: 0;
+                left: 0;
+            }
+            #loading {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                font-size: 2em;
+                color: white;
+                z-index: 10;
             }
         </style>
     </head>
     <body>
-        <img id="stream" src="/video" alt="Fullscreen Stream">
+        <div id="loading">Cargando...</div>
+        <img id="stream" src="/video" alt="Fullscreen Stream" style="display:none;">
 
         <script>
             const streamElement = document.getElementById('stream');
+            const loadingElement = document.getElementById('loading');
             const streamUrl = '/video';
-            let reconnectInterval = 5000;
+            let reconnectInterval = 3000;
             let imgCache = [];
             let imgIndex = 0;
-            let maxCacheSize = 5;
+            let maxCacheSize = 3;
 
             function logToServer(level, message) {
                 fetch('/log', {
@@ -165,14 +198,15 @@ def start_server(port, camera_index):
                         imgIndex = imgCache.length - 1;
                     }
                     streamElement.src = imgCache[imgIndex];
-                    setTimeout(loadStream, 0);  // Carga el siguiente frame inmediatamente
+                    streamElement.style.display = 'block';
+                    loadingElement.style.display = 'none';
                 };
                 img.onerror = (error) => {
                     console.error('Error al cargar el stream. Reintentando en', reconnectInterval, 'ms', error);
-                    logToServer('error', 'Error al cargar el stream. Reintentando la conexión... ' + error); // Enviar log al servidor
+                    logToServer('error', 'Error al cargar el stream. Reintentando la conexión... ' + error);
                     setTimeout(loadStream, reconnectInterval);
                 };
-                img.src = streamUrl + '?_=' + new Date().getTime(); // Evita el caché
+                img.src = streamUrl + '?_=' + new Date().getTime();
             }
 
             loadStream();
@@ -207,12 +241,12 @@ def start_server(port, camera_index):
                     .then(data => {
                         if (data.status !== 'ok') {
                             console.error('Heartbeat failed. Reintentando la conexión...');
-                            logToServer('error', 'Heartbeat failed. Reintentando la conexión...'); // Enviar log al servidor
+                            logToServer('error', 'Heartbeat failed. Reintentando la conexión...');
                         }
                     })
                     .catch(error => {
                         console.error('Error checking heartbeat:', error);
-                        logToServer('error', 'Error checking heartbeat: ' + error); // Enviar log al servidor
+                        logToServer('error', 'Error checking heartbeat: ' + error);
                     });
             }
 
@@ -298,6 +332,10 @@ def start_server(port, camera_index):
             create_tray_icon("red")
             return
 
+        # Establecer la resolución de la cámara (opcional)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # Ancho
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  # Alto
+
         while streaming:
             ret, frame = cap.read()
             if not ret:
@@ -343,9 +381,13 @@ def gui():
     camera_label = ttk.Label(main_frame, text="Dispositivo de Cámara:")
     camera_label.grid(row=1, column=0, sticky=tk.W)
 
-    camera_combobox = ttk.Combobox(main_frame, values=list_cameras())
+    # Modify camera combobox to show names
+    cameras = list_cameras()
+    camera_names = [cam["name"] for cam in cameras]
+    camera_combobox = ttk.Combobox(main_frame, values=camera_names)
     camera_combobox.grid(row=1, column=1, sticky=(tk.E, tk.W))
-    camera_combobox.current(0)
+    if camera_names:
+        camera_combobox.current(0)
 
     start_button = ttk.Button(main_frame, text="Iniciar Transmisión", command=lambda: start(port_entry.get(), camera_combobox.get()))
     start_button.grid(row=2, column=0, columnspan=2, pady=10)
@@ -359,17 +401,20 @@ def gui():
 
     create_tray_icon("red")
 
-    def start(port_str, camera_index_str):
+    def start(port_str, camera_name):
         try:
             port = int(port_str)
-            camera_index = int(camera_index_str)
+            # Find camera index by name
+            cameras = list_cameras()
+            camera_index = next(cam["index"] for cam in cameras if cam["name"] == camera_name)
+            
             if not (1024 <= port <= 65535):
                 messagebox.showerror("Error", "El puerto debe estar entre 1024 y 65535.")
                 return
             status_label.config(text="Estado: Iniciando...", foreground="orange")
             threading.Thread(target=lambda: start_server_wrapper(port, camera_index), daemon=True).start()
-        except ValueError:
-            messagebox.showerror("Error", "Por favor, introduce un número de puerto y un índice de cámara válidos.")
+        except (ValueError, StopIteration):
+            messagebox.showerror("Error", "Por favor, introduce un número de puerto válido y selecciona una cámara.")
 
     def start_server_wrapper(port, camera_index):
         start_server(port, camera_index)
