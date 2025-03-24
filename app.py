@@ -60,9 +60,22 @@ def hide_window():
     global root
     root.withdraw()
 
+def list_cameras():
+    index = 0
+    arr = []
+    while True:
+        cap = cv2.VideoCapture(index)
+        if not cap.read()[0]:
+            break
+        else:
+            arr.append(index)
+        cap.release()
+        index += 1
+    return arr
+
 last_delay_log_time = {}  # Diccionario para almacenar el último tiempo de log por cliente
 
-def start_server(port):
+def start_server(port, camera_index):
     global app, frame_buffer, streaming, frame_count, root, client_delays, last_delay_log_time
 
     if not is_port_available(port):
@@ -278,7 +291,7 @@ def start_server(port):
     threading.Thread(target=flask_thread, daemon=True).start()
 
     try:
-        cap = cv2.VideoCapture(0)  # Abrir la cámara
+        cap = cv2.VideoCapture(camera_index)  # Abrir la cámara seleccionada
         if not cap.isOpened():
             logging.error("No se pudo abrir la cámara")
             streaming = False
@@ -327,11 +340,18 @@ def gui():
     port_entry.grid(row=0, column=1, sticky=(tk.E, tk.W))
     port_entry.insert(0, "5000")
 
-    start_button = ttk.Button(main_frame, text="Iniciar Transmisión", command=lambda: start(port_entry.get()))
-    start_button.grid(row=1, column=0, columnspan=2, pady=10)
+    camera_label = ttk.Label(main_frame, text="Dispositivo de Cámara:")
+    camera_label.grid(row=1, column=0, sticky=tk.W)
+
+    camera_combobox = ttk.Combobox(main_frame, values=list_cameras())
+    camera_combobox.grid(row=1, column=1, sticky=(tk.E, tk.W))
+    camera_combobox.current(0)
+
+    start_button = ttk.Button(main_frame, text="Iniciar Transmisión", command=lambda: start(port_entry.get(), camera_combobox.get()))
+    start_button.grid(row=2, column=0, columnspan=2, pady=10)
 
     status_label = ttk.Label(main_frame, text="Estado: Detenido", foreground="red")
-    status_label.grid(row=2, column=0, columnspan=2)
+    status_label.grid(row=3, column=0, columnspan=2)
 
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
@@ -339,19 +359,20 @@ def gui():
 
     create_tray_icon("red")
 
-    def start(port_str):
+    def start(port_str, camera_index_str):
         try:
             port = int(port_str)
+            camera_index = int(camera_index_str)
             if not (1024 <= port <= 65535):
                 messagebox.showerror("Error", "El puerto debe estar entre 1024 y 65535.")
                 return
             status_label.config(text="Estado: Iniciando...", foreground="orange")
-            threading.Thread(target=lambda: start_server_wrapper(port), daemon=True).start()
+            threading.Thread(target=lambda: start_server_wrapper(port, camera_index), daemon=True).start()
         except ValueError:
-            messagebox.showerror("Error", "Por favor, introduce un número de puerto válido.")
+            messagebox.showerror("Error", "Por favor, introduce un número de puerto y un índice de cámara válidos.")
 
-    def start_server_wrapper(port):
-        start_server(port)
+    def start_server_wrapper(port, camera_index):
+        start_server(port, camera_index)
         root.after(0, lambda: update_status_label())
 
     def update_status_label():
