@@ -1,5 +1,7 @@
 import socket
 import cv2
+import socket
+import cv2
 import numpy as np
 import threading
 import pystray
@@ -100,6 +102,26 @@ def start_server(port, camera_index):
         messagebox.showerror("Error", f"Índice de cámara {camera_index} fuera de rango.")
         return
 
+    # Check if the camera is available before starting the server
+    cap = cv2.VideoCapture(camera_index)
+    if not cap.isOpened():
+        messagebox.showerror("Error", "La cámara no se pudo abrir. Puede que esté en uso por otra aplicación.")
+        if cap is not None:
+            cap.release()
+        return
+    else:
+        # Attempt to grab a frame to ensure the camera is truly available
+        ret, frame = cap.read()
+        if not ret:
+            messagebox.showerror("Error", "La cámara está en uso por otra aplicación o no está disponible.")
+            if cap is not None:
+                cap.release()
+            return
+        else:
+            messagebox.showinfo("Éxito", f"Cámara {camera_index} disponible. Iniciando transmisión.")
+            if cap is not None:
+                cap.release()  # Release the camera after checking its availability
+
     # Obtener la dirección IP local
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -109,11 +131,6 @@ def start_server(port, camera_index):
     except Exception as e:
         local_ip = "127.0.0.1"
         logging.error(f"No se pudo obtener la IP local, usando localhost: {e}")
-
-    messagebox.showinfo("Éxito", f"Iniciando transmisión en el puerto {port}")
-    logging.info(f"Iniciando transmisión en el puerto {port}")
-    logging.info(f"Transmisión disponible en: http://localhost:{port}")
-    logging.info(f"Transmisión disponible en: http://{local_ip}:{port}")
 
     streaming = True
     create_tray_icon("green")
@@ -324,32 +341,92 @@ def start_server(port, camera_index):
 
     threading.Thread(target=flask_thread, daemon=True).start()
 
-    try:
-        cap = cv2.VideoCapture(camera_index)  # Abrir la cámara seleccionada
-        if not cap.isOpened():
-            logging.error("No se pudo abrir la cámara")
-            streaming = False
-            create_tray_icon("red")
-            return
+    while streaming:
+        try:
+            cap = cv2.VideoCapture(camera_index)  # Abrir la cámara seleccionada
+            if not cap.isOpened():
+                messagebox.showerror("Error", "La cámara está en uso por otra aplicación. Intentando de nuevo...")
+                if cap is not None:
+                    cap.release()
+                time.sleep(5)  # Esperar 5 segundos antes de intentar de nuevo
+                continue  # Volver al inicio del bucle while
+            else:
+                messagebox.showinfo("Éxito", f"Cámara {camera_index} disponible. Iniciando transmisión.")
+                break  # Salir del bucle while si la cámara se abre correctamente
+        except Exception as e:
+            logging.error(f"Error al intentar abrir la cámara: {e}")
+            messagebox.showerror("Error", f"Error al intentar abrir la cámara: {e}. Intentando de nuevo...")
+            time.sleep(5)
+            continue
 
+    if not streaming:
+        logging.info("Transmisión cancelada debido a que la cámara no está disponible.")
+        create_tray_icon("red")
+        return
+
+    try:
         # Establecer la resolución de la cámara (opcional)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # Ancho
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  # Alto
+        # cap_width = 640
+        # cap_height = 480
+        # cap.set(cv2.CAP_PROP_FRAME_WIDTH, cap_width)  # Ancho
+        # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cap_height)  # Alto
 
         while streaming:
-            ret, frame = cap.read()
-            if not ret:
-                logging.error("Error al capturar el frame de la cámara")
+            try:
+                # Check if the camera is still available
+                if cap is None or not cap.isOpened():
+                    logging.error("Cámara no disponible, intentando reconectar...")
+                    if cap is not None:
+                        cap.release()
+                    cap = None
+                    time.sleep(5)  # Wait before retrying
+                    try:
+                        cap = cv2.VideoCapture(camera_index)
+                        if not cap.isOpened():
+                            logging.error("No se pudo reabrir la cámara.")
+                            continue  # Skip to the next iteration of the streaming loop
+                    except Exception as e:
+                        logging.error(f"Error al intentar reabrir la cámara: {e}")
+                        continue  # Skip to the next iteration of the streaming loop
+                    logging.info("Cámara reconectada exitosamente.")
+
+                ret, frame = cap.read()
+                if not ret:
+                    logging.error("Error al capturar el frame de la cámara")
+                    # Attempt to re-open the camera
+                    if cap is not None:
+                        cap.release()
+                    cap = None
+                    time.sleep(5)  # Wait before retrying
+                    while True:
+                        try:
+                            cap = cv2.VideoCapture(camera_index)
+                            if not cap.isOpened():
+                                logging.error("No se pudo reabrir la cámara. Intentando de nuevo...")
+                                time.sleep(5)
+                                continue
+                             # Establecer la resolución de la cámara (opcional)
+                            # cap.set(cv2.CAP_PROP_FRAME_WIDTH, cap_width)  # Ancho
+                            # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cap_height)  # Alto
+                            break  # Camera re-opened successfully
+                        except Exception as e:
+                            logging.error(f"Error al intentar reabrir la cámara: {e}")
+                            time.sleep(5)
+                    continue  # Skip to the next iteration of the streaming loop
+
+                frame_count += 1
+
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 30])
+                frame_buffer = buffer.tobytes()
+                time.sleep(0.01)  # Pequeña pausa para evitar el uso excesivo de la CPU
+            except Exception as e:
+                logging.error(f"Error durante la captura del frame: {e}")
+                messagebox.showerror("Error", "La cámara puede estar en uso o desconectada. Intente reiniciar la transmisión.")
                 streaming = False
                 break
 
-            frame_count += 1
-
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 30])
-            frame_buffer = buffer.tobytes()
-            time.sleep(0.01)  # Pequeña pausa para evitar el uso excesivo de la CPU
-
-        cap.release()
+        if cap is not None:
+            cap.release()
     except Exception as e:
         logging.error(f"Error durante la captura de la cámara: {e}")
         streaming = False
