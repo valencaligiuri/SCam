@@ -1,0 +1,6 @@
+Flask>=2.0.3
+numpy>=1.21.4
+opencv-python>=4.5.4.60
+Pillow>=8.4.0
+pystray>=0.17.3
+mss>=6.1.0

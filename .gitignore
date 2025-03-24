@@ -1,0 +1,5 @@
+# filepath: c:\Users\valen\OneDrive\Documents\Proyectos\SScreen\.gitignore
+venv/
+__pycache__/
+*.pyc
+.DS_Store
