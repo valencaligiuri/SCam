@@ -102,7 +102,7 @@ def start_server(port):
     <!DOCTYPE html>
     <html>
     <head>
-        <title>SScreen</title>
+        <title>SCam</title>
         <style>
             body, html {
                 margin: 0;
