@@ -85,6 +85,15 @@ def list_cameras():
                 arr.append({"name": name, "index": index})
             cap.release()
             index += 1
+
+    # Additional check for virtual cameras
+    for index in range(10):
+        cap = cv2.VideoCapture(index)
+        if cap.isOpened():
+            name = f"Virtual Camera {index}"
+            arr.append({"name": name, "index": index})
+            cap.release()
+
     return arr
 
 last_delay_log_time = {}  # Diccionario para almacenar el último tiempo de log por cliente
